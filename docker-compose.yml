@@ -9,7 +9,8 @@ services:
       - 7900:7900
     volumes:
       - ./dist:/app
-      - ./config/environments/${DATASTREAM_NETWORK}/config.toml:/app/config.toml
+      - ./:/datarelay
+      - ./config/environments/local/config.toml:/app/config.toml
     command: 
       - "/bin/sh"
       - "-c"
