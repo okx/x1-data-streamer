@@ -236,7 +236,7 @@ func (s *StreamServer) waitConnections() {
 		}
 
 		// Check max connections allowed
-		if len(s.clients) >= maxConnections {
+		if s.getSafeClientsLen() >= maxConnections {
 			log.Warnf("Unable to accept client connection, maximum number of connections reached (%d)", maxConnections)
 			conn.Close()
 			time.Sleep(2 * time.Second) // nolint:gomnd
@@ -587,7 +587,8 @@ func (s *StreamServer) broadcastAtomicOp() {
 		// Wait for new atomic operation to broadcast
 		broadcastOp := <-s.stream
 		start := time.Now().UnixMilli()
-
+		var killedClientMap = map[string]struct{}{}
+		s.mutexClients.Lock()
 		// For each connected and started client
 		log.Debugf("Clients: %d, AO-entries: %d", len(s.clients), len(broadcastOp.entries))
 		for id, cli := range s.clients {
@@ -611,11 +612,17 @@ func (s *StreamServer) broadcastAtomicOp() {
 					if err != nil {
 						// Kill client connection
 						log.Warnf("Error sending entry to %s: %v", id, err)
-						s.killClient(id)
+						killedClientMap[id] = struct{}{}
 					}
 				}
 			}
 		}
+		s.mutexClients.Unlock()
+
+		for k := range killedClientMap {
+			s.killClient(k)
+		}
+
 		log.Debugf("broadcastAtomicOp process time: %vms", time.Now().UnixMilli()-start)
 	}
 }
@@ -637,7 +644,7 @@ func (s *StreamServer) killClient(clientId string) {
 
 // processCommand manages the received TCP commands from the clients
 func (s *StreamServer) processCommand(command Command, clientId string) error {
-	cli := s.clients[clientId]
+	cli := s.getSafeClient(clientId)
 
 	// Manage each different kind of command request from a client
 	var err error
@@ -717,12 +724,13 @@ func (s *StreamServer) processCommand(command Command, clientId string) error {
 // processCmdStart processes the TCP Start command from the clients
 func (s *StreamServer) processCmdStart(clientId string) error {
 	// Read from entry number parameter
-	conn := s.clients[clientId].conn
+	conn := s.getSafeClient(clientId).conn
 	fromEntry, err := readFullUint64(conn)
 	if err != nil {
 		return err
 	}
-	s.clients[clientId].fromEntry = fromEntry
+
+	s.getSafeClient(clientId).fromEntry = fromEntry
 
 	// Log
 	log.Infof("Client %s command Start from %d", clientId, fromEntry)
@@ -752,7 +760,7 @@ func (s *StreamServer) processCmdStart(clientId string) error {
 // processCmdStartBookmark processes the TCP Start Bookmark command from the clients
 func (s *StreamServer) processCmdStartBookmark(clientId string) error {
 	// Read bookmark length parameter
-	conn := s.clients[clientId].conn
+	conn := s.getSafeClient(clientId).conn
 	length, err := readFullUint32(conn)
 	if err != nil {
 		return err
@@ -817,7 +825,7 @@ func (s *StreamServer) processCmdHeader(clientId string) error {
 	binaryHeader := encodeHeaderEntryToBinary(header)
 
 	// Send header entry to the client
-	conn := s.clients[clientId].conn
+	conn := s.getSafeClient(clientId).conn
 	if conn != nil {
 		_, err = conn.Write(binaryHeader)
 	} else {
@@ -833,7 +841,7 @@ func (s *StreamServer) processCmdHeader(clientId string) error {
 // processCmdEntry processes the TCP Entry command from the clients
 func (s *StreamServer) processCmdEntry(clientId string) error {
 	// Read from entry number parameter
-	conn := s.clients[clientId].conn
+	conn := s.getSafeClient(clientId).conn
 	entryNumber, err := readFullUint64(conn)
 	if err != nil {
 		return err
@@ -860,7 +868,7 @@ func (s *StreamServer) processCmdEntry(clientId string) error {
 	binaryEntry := encodeFileEntryToBinary(entry)
 
 	// Send entry to the client
-	conn = s.clients[clientId].conn
+	conn = s.getSafeClient(clientId).conn
 	if conn != nil {
 		_, err = conn.Write(binaryEntry)
 	} else {
@@ -877,7 +885,7 @@ func (s *StreamServer) processCmdEntry(clientId string) error {
 // processCmdBookmark processes the TCP Bookmark command from the clients
 func (s *StreamServer) processCmdBookmark(clientId string) error {
 	// Read bookmark length parameter
-	conn := s.clients[clientId].conn
+	conn := s.getSafeClient(clientId).conn
 	length, err := readFullUint32(conn)
 	if err != nil {
 		return err
@@ -910,7 +918,7 @@ func (s *StreamServer) processCmdBookmark(clientId string) error {
 	binaryEntry := encodeFileEntryToBinary(entry)
 
 	// Send entry to the client
-	conn = s.clients[clientId].conn
+	conn = s.getSafeClient(clientId).conn
 	if conn != nil {
 		_, err = conn.Write(binaryEntry)
 	} else {
@@ -927,7 +935,8 @@ func (s *StreamServer) processCmdBookmark(clientId string) error {
 // streamingFromEntry sends to the client the stream data starting from the requested entry number
 func (s *StreamServer) streamingFromEntry(clientId string, fromEntry uint64) error {
 	// Log
-	conn := s.clients[clientId].conn
+	conn := s.getSafeClient(clientId).conn
+
 	log.Infof("SYNCING %s from entry %d...", clientId, fromEntry)
 
 	// Start file stream iterator
@@ -988,7 +997,7 @@ func (s *StreamServer) sendResultEntry(errorNum uint32, errorStr string, clientI
 
 	// Send the result entry to the client
 	var err error
-	conn := s.clients[clientId].conn
+	conn := s.getSafeClient(clientId).conn
 	if conn != nil {
 		_, err = conn.Write(binaryEntry)
 	} else {
@@ -999,6 +1008,20 @@ func (s *StreamServer) sendResultEntry(errorNum uint32, errorStr string, clientI
 		return err
 	}
 	return nil
+}
+
+func (s *StreamServer) getSafeClient(clientId string) *client {
+	s.mutexClients.Lock()
+	client := s.clients[clientId]
+	s.mutexClients.Unlock()
+	return client
+}
+
+func (s *StreamServer) getSafeClientsLen() int {
+	s.mutexClients.Lock()
+	clientLen := len(s.clients)
+	s.mutexClients.Unlock()
+	return clientLen
 }
 
 // BookmarkPrintDump prints all bookmarks
