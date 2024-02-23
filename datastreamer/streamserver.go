@@ -14,8 +14,6 @@ import (
 )
 
 // Command type for the TCP client commands
-//
-//go:generate go run github.com/alvaroloes/enumer -type=Command
 type Command uint64
 
 // ClientStatus type for the status of the client
@@ -37,8 +35,9 @@ type CommandError uint32
 const EntryTypeNotFound = math.MaxUint32
 
 const (
-	maxConnections = 100 // Maximum number of connected clients
-	streamBuffer   = 256 // Buffers for the stream channel
+	maxConnections    = 100 // Maximum number of connected clients
+	streamBuffer      = 256 // Buffers for the stream channel
+	maxBookmarkLength = 16  // Maximum number of bytes for a bookmark
 )
 
 const (
@@ -111,6 +110,8 @@ type StreamServer struct {
 	fileName string // Stream file name
 	started  bool   // Flag server started
 
+	version      uint8
+	systemID     uint64
 	streamType   StreamType
 	ln           net.Listener
 	clients      map[string]*client
@@ -149,13 +150,15 @@ type ResultEntry struct {
 }
 
 // NewServer creates a new data stream server
-func NewServer(port uint16, streamType StreamType, fileName string, cfg *log.Config) (*StreamServer, error) {
+func NewServer(port uint16, version uint8, systemID uint64, streamType StreamType, fileName string, cfg *log.Config) (*StreamServer, error) {
 	// Create the server data stream
 	s := StreamServer{
 		port:     port,
 		fileName: fileName,
 		started:  false,
 
+		version:    version,
+		systemID:   systemID,
 		streamType: streamType,
 		ln:         nil,
 		clients:    make(map[string]*client),
@@ -183,7 +186,7 @@ func NewServer(port uint16, streamType StreamType, fileName string, cfg *log.Con
 
 	// Open (or create) the data stream file
 	var err error
-	s.streamFile, err = NewStreamFile(s.fileName, s.streamType)
+	s.streamFile, err = NewStreamFile(s.fileName, version, systemID, s.streamType)
 	if err != nil {
 		return nil, err
 	}
@@ -572,6 +575,55 @@ func (s *StreamServer) GetFirstEventAfterBookmark(bookmark []byte) (FileEntry, e
 	return iterator.Entry, err
 }
 
+// GetDataBetweenBookmarks returns the data between two bookmarks
+func (s *StreamServer) GetDataBetweenBookmarks(bookmarkFrom []byte, bookmarkTo []byte) ([]byte, error) {
+	var err error
+	var response []byte
+
+	// Get entry of the from bookmark
+	fromEntryNum, err := s.bookmark.GetBookmark(bookmarkFrom)
+	if err != nil {
+		return response, err
+	}
+
+	// Get entry of the to bookmark
+	toEntryNum, err := s.bookmark.GetBookmark(bookmarkTo)
+	if err != nil {
+		return response, err
+	}
+
+	// Check if the from bookmark is greater than the to bookmark
+	if fromEntryNum > toEntryNum {
+		return response, ErrInvalidBookmarkRange
+	}
+
+	// Initialize file stream iterator from bookmark's entry
+	iterator, err := s.streamFile.iteratorFrom(fromEntryNum, true)
+	if err != nil {
+		return response, err
+	}
+
+	// Loop until we reach the to bookmark
+	for {
+		// Get next entry data
+		end, err := s.streamFile.iteratorNext(iterator)
+
+		// Loop break conditions
+		if err != nil || end || iterator.Entry.Number >= toEntryNum {
+			break
+		}
+
+		if iterator.Entry.Type != EtBookmark {
+			response = append(response, iterator.Entry.Data...)
+		}
+	}
+
+	// Close iterator
+	s.streamFile.iteratorEnd(iterator)
+
+	return response, err
+}
+
 // clearAtomicOp sets the current atomic operation to none
 func (s *StreamServer) clearAtomicOp() {
 	// No atomic operation in progress and empty entries slice
@@ -730,7 +782,6 @@ func (s *StreamServer) processCmdStart(client *client) error {
 	if err != nil {
 		return err
 	}
-
 	client.fromEntry = fromEntry
 
 	// Log
@@ -764,6 +815,12 @@ func (s *StreamServer) processCmdStartBookmark(client *client) error {
 	length, err := readFullUint32(client.conn)
 	if err != nil {
 		return err
+	}
+
+	// Check maximum length allowed
+	if length > maxBookmarkLength {
+		log.Infof("Client %s exceeded [%d] maximum allowed length [%d] for a bookmark.", client.clientId, length, maxBookmarkLength)
+		return ErrBookmarkMaxLength
 	}
 
 	// Read bookmark parameter
@@ -885,6 +942,12 @@ func (s *StreamServer) processCmdBookmark(client *client) error {
 	length, err := readFullUint32(client.conn)
 	if err != nil {
 		return err
+	}
+
+	// Check maximum length allowed
+	if length > maxBookmarkLength {
+		log.Infof("Client %s exceeded [%d] maximum allowed length [%d] for a bookmark.", client.clientId, length, maxBookmarkLength)
+		return ErrBookmarkMaxLength
 	}
 
 	// Read bookmark parameter
@@ -1121,4 +1184,9 @@ func PrintResultEntry(e ResultEntry) {
 	log.Debugf("length: [%d]", e.length)
 	log.Debugf("errorNum: [%d]", e.errorNum)
 	log.Debugf("errorStr: [%s]", e.errorStr)
+}
+
+// IsACommand checks if a command is a valid command
+func (c Command) IsACommand() bool {
+	return c >= CmdStart && c <= CmdBookmark
 }

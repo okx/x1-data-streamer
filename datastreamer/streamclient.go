@@ -503,7 +503,7 @@ func (c *StreamClient) getResult(cmd Command) ResultEntry {
 // getHeader consumes a header entry
 func (c *StreamClient) getHeader() HeaderEntry {
 	h := <-c.headers
-	log.Infof("%s Header received info: TotalEntries[%d], TotalLength[%d]", c.Id, h.TotalEntries, h.TotalLength)
+	log.Infof("%s Header received info: TotalEntries[%d], TotalLength[%d], Version[%d], SystemID[%d]", c.Id, h.TotalEntries, h.TotalLength, h.Version, h.SystemID)
 	return h
 }
 
@@ -523,7 +523,7 @@ func (c *StreamClient) getStreaming() {
 		// Process the data entry
 		err := c.processEntry(&e, c, c.relayServer)
 		if err != nil {
-			log.Fatalf("%s Error processing entry %d: %s. HALTED!", c.Id, e.Number, err.Error())
+			log.Fatalf("%s Processing entry %d: %s. HALTED!", c.Id, e.Number, err.Error())
 		}
 	}
 }

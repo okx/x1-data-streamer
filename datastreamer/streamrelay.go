@@ -9,7 +9,7 @@ type StreamRelay struct {
 }
 
 // NewRelay creates a new data stream relay
-func NewRelay(server string, port uint16, streamType StreamType, fileName string, cfg *log.Config) (*StreamRelay, error) {
+func NewRelay(server string, port uint16, version uint8, systemID uint64, streamType StreamType, fileName string, cfg *log.Config) (*StreamRelay, error) {
 	var r StreamRelay
 	var err error
 
@@ -21,7 +21,7 @@ func NewRelay(server string, port uint16, streamType StreamType, fileName string
 	}
 
 	// Create server side
-	r.server, err = NewServer(port, streamType, fileName, cfg)
+	r.server, err = NewServer(port, version, systemID, streamType, fileName, cfg)
 	if err != nil {
 		log.Errorf("Error creating relay server side: %v", err)
 		return nil, err
@@ -49,13 +49,13 @@ func (r *StreamRelay) Start() error {
 		return err
 	}
 	r.server.initEntry = r.client.Header.TotalEntries
-	
-	// Start server side
-        err = r.server.Start()
-        if err != nil {
-                log.Errorf("Error starting relay server: %v", err)
-                return err
-        }
+
+	// Start server side before exec command `CmdStart`
+	err = r.server.Start()
+	if err != nil {
+		log.Errorf("Error starting relay server: %v", err)
+		return err
+	}
 
 	// Sync with master server from latest received entry
 	r.client.FromEntry = r.server.GetHeader().TotalEntries

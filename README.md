@@ -31,7 +31,9 @@ At the beginning of the file there are the following magic bytes (file signature
 
 #### HEADER ENTRY format (HeaderEntry)
 >u8 packetType = 1 // 1:Header  
->u32 headerLength = 29 // Total length of header entry  
+>u32 headerLength = 38 // Total length of header entry  
+>u8 Version // Stream file version (starting from 1)  
+>u64 SystemID // E.g.: ChainID  
 >u64 streamType // 1:Sequencer  
 >u64 TotalLength // Total bytes used in the file  
 >u64 TotalEntries // Total number of data entries  
@@ -74,10 +76,10 @@ Syncs from the bookmark (`fromBookmark`) and starts receiving data streaming fro
 Command format sent by the client:
 >u64 command = 4  
 >u64 streamType // e.g. 1:Sequencer  
->u32 bookmarkLength // Length of fromBookmark  
+>u32 bookmarkLength // Length of fromBookmark (Max bookmark length value is 16)  
 >u8[] fromBookmark  
 
-If already started terminates the connection.
+If already started or `bookmarkLength` exceeds the maximum length, terminates the connection.
 
 ### Stop
 Stops the reception of the streaming transmission.
@@ -113,10 +115,10 @@ Gets the data from the entry pointed by the bookmark (`bookmark`) in the format 
 Command format sent by the client:
 >u64 command = 5  
 >u64 streamType // e.g. 1:Sequencer  
->u32 bookmarkLength // Length of bookmark  
+>u32 bookmarkLength // Length of bookmark (Max bookmark length value is 16)  
 >u8[] bookmark  
 
-If streaming already started terminates the connection.
+If streaming already started or `bookmarkLength` exceeds the maximum length, terminates the connection.
 
 ### RESULT FORMAT (ResultEntry)
 Remember that all these TCP commands firstly return a response in the following detailed format:
@@ -156,6 +158,7 @@ Stream relay server included in the datastream library allows scaling the number
 - GetEntry(u64 entryNumber) -> returns struct FileEntry
 - GetBookmark(u8[] bookmark) -> returns u64 entryNumber
 - GetFirstEventAfterBookmark(u8[] bookmark) -> returns struct FileEntry
+- GetDataBetweenBookmarks(bookmarkFrom []byte, bookmarkTo []byte) ([]byte, error) -> returns the array of data, ignoring bookmarks, between the given ones
 
 #### Update data API
 - UpdateEntryData(u64 entryNumber, u32 entryType, u8[] newData)
@@ -297,24 +300,29 @@ List of events (entry types):
 >u64 batchNum  
 >u64 blockL2Num  
 >u64 timestamp  
+>u32 deltaTimestamp  
+>u32 L1InfoTreeIndex    
+>u8[32] l1BlockHash  
 >u8[32] globalExitRoot  
 >u8[20] coinbase  
->u16 forkId  
+>u16 forkID  
+>u32 chainID  
 
 ### L2 TX
 - Entry type = 2
 - Entry data:  
 >u8   gasPricePercentage  
 >u8   isValid  // Intrinsic  
+>u8[32] stateRoot  
 >u32  encodedTXLength  
 >u8[] encodedTX  
 
 ### End L2 Block
 - Entry type = 3
-- Entry data:  
->u64   blockL2Num  
->u256  l2BlockHash  
->u256  stateRoot  
+- Entry data:
+>u64  blockL2Num  
+>u8[32] l2BlockHash  
+>u8[32] stateRoot  
 
 ### Update GER
 - Entry type = 4
@@ -323,5 +331,6 @@ List of events (entry types):
 >u64 timestamp  
 >u8[32] globalExitRoot  
 >u8[20] coinbase  
->u16 forkId  
->u256  stateRoot  
+>u16 forkID  
+>u32 chainID  
+>u8[32]  stateRoot  
