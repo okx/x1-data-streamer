@@ -2,6 +2,7 @@ package datastreamer
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"net"
@@ -230,10 +231,12 @@ func (s *StreamServer) Start() error {
 // waitConnections waits for a new client connection and creates a goroutine to manages it
 func (s *StreamServer) waitConnections() {
 	defer s.ln.Close()
+	fmt.Println("StreamServer waitConnections......")
 
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
+			fmt.Println("accept() error", err)
 			log.Errorf("Error accepting new connection: %v", err)
 			time.Sleep(2 * time.Second) // nolint:gomnd
 			continue
@@ -241,6 +244,7 @@ func (s *StreamServer) waitConnections() {
 
 		// Check max connections allowed
 		if s.getSafeClientsLen() >= maxConnections {
+			fmt.Printf("Unable to accept client connection, maximum number of connections reached (%d)\n", maxConnections)
 			log.Warnf("Unable to accept client connection, maximum number of connections reached (%d)", maxConnections)
 			conn.Close()
 			time.Sleep(2 * time.Second) // nolint:gomnd
@@ -258,6 +262,7 @@ func (s *StreamServer) handleConnection(conn net.Conn) {
 
 	clientId := conn.RemoteAddr().String()
 	log.Debugf("New connection: %s", clientId)
+	fmt.Printf("StreamServer handleConnection from: %s\n", clientId)
 
 	s.mutexClients.Lock()
 	s.clients[clientId] = &client{
