@@ -20,11 +20,5 @@ FROM alpine:3.19.0
 COPY --from=build /src/dist/dsrelay /app/dsrelay
 COPY --from=build /src/config.toml /app/sample.config.toml
 
-ARG USER=dsrelay
-ENV HOME /home/$USER
-RUN adduser -D $USER
-USER $USER
-WORKDIR $HOME
-
 EXPOSE 7900
 CMD ["/bin/sh", "-c", "/app/dsrelay"]
